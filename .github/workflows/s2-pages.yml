@@ -1,0 +1,116 @@
+# PixelWatch M0.5 spike S2: Actions Pages deploy + ADR 0004 readiness (03 §7 steps 1-4).
+# Synthetic site only. fail_mode=bad-artifact deliberately makes deploy-pages fail.
+name: S2 Pages deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      store_tip:
+        description: Synthetic store tip (a-z0-9-, max 40)
+        required: true
+        type: string
+      pr_numbers:
+        description: PRs to publish latest.json for ("1" or "1,2")
+        required: true
+        default: "1"
+        type: string
+      run_key:
+        description: Synthetic run key for the PR pointers
+        required: true
+        default: "1001-a1"
+        type: string
+      fail_mode:
+        description: none, or bad-artifact to make the deploy fail
+        required: true
+        default: none
+        type: choice
+        options: [none, bad-artifact]
+      ready_timeout_s:
+        description: Readiness timeout in seconds
+        required: true
+        default: "600"
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pixelwatch-pages-spike
+  cancel-in-progress: false
+
+jobs:
+  project:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Check out (default branch, this spike's scripts only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Record runner
+        run: |
+          node --version
+          echo "ImageOS=${ImageOS:-} ImageVersion=${ImageVersion:-}"
+
+      - name: Build synthetic site
+        id: build
+        env:
+          STORE_TIP: ${{ inputs.store_tip }}
+          PR_NUMBERS: ${{ inputs.pr_numbers }}
+          RUN_KEY: ${{ inputs.run_key }}
+          HEAD_SHA: 5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e
+          RELEASE_COMMIT: ${{ github.sha }}
+          CONFIG_COMMIT: ${{ github.sha }}
+          OUT_DIR: _site
+          BUILT_MANIFEST: ${{ runner.temp }}/pw-built.json
+        run: node scripts/build-site.mjs
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+      - name: Deploy to Pages
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: ${{ inputs.fail_mode == 'bad-artifact' && 'no-such-artifact' || 'github-pages' }}
+
+      - name: Readiness (served bytes, not status codes)
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        env:
+          SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pixelwatch/
+          BUILT_MANIFEST: ${{ runner.temp }}/pw-built.json
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          READY_TIMEOUT_S: ${{ inputs.ready_timeout_s }}
+          LOG_FILE: ${{ runner.temp }}/readiness.jsonl
+        run: |
+          set -uo pipefail
+          SITE_URL="$(printf '%s' "$SITE_URL" | tr 'A-Z' 'a-z' | sed 's#/pixelwatch/$##')/pixelwatch/"
+          export SITE_URL
+          echo "deploy outcome: ${DEPLOY_OUTCOME}"
+          if [[ "${DEPLOY_OUTCOME}" == "success" ]]; then export TIMEOUT_S="${READY_TIMEOUT_S}"; else export TIMEOUT_S=60; fi
+          node scripts/probe.mjs ready
+          status=$?
+          if [[ "${DEPLOY_OUTCOME}" != "success" ]]; then
+            echo "SUMMARY: deploy ${DEPLOY_OUTCOME}; readiness exit ${status}. Stored; deployment pending (repair: rerun this workflow with the same store_tip)."
+          fi
+          exit "${status}"
+
+      - name: Upload readiness log
+        if: ${{ always() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s2-readiness-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/readiness.jsonl
+            ${{ runner.temp }}/pw-built.json
+          retention-days: 90
+          if-no-files-found: warn

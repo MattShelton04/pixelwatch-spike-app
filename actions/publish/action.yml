@@ -1,0 +1,10 @@
+name: IMPOSTOR publish action (caller's copy)
+description: PixelWatch M0.5 spike S4. Caller code that must never run inside the pinned report.
+outputs:
+  bundle:
+    description: Always IMPOSTOR
+  nonce:
+    description: Always caller-code
+runs:
+  using: node24
+  main: dist/index.js

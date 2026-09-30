@@ -1,0 +1,34 @@
+# PixelWatch M0.5 spike S4: the adopter's own local wrapper around the pinned report (nested call).
+name: S4 local wrapper (reusable)
+
+on:
+  workflow_call:
+    outputs:
+      ingest-bundle:
+        value: ${{ jobs.report.outputs.ingest-bundle }}
+      ingest-nonce:
+        value: ${{ jobs.report.outputs.ingest-nonce }}
+      ingest-workflow-repository:
+        value: ${{ jobs.report.outputs.ingest-workflow-repository }}
+      ingest-workflow-sha:
+        value: ${{ jobs.report.outputs.ingest-workflow-sha }}
+      project-bundle:
+        value: ${{ jobs.report.outputs.project-bundle }}
+      project-nonce:
+        value: ${{ jobs.report.outputs.project-nonce }}
+      project-workflow-repository:
+        value: ${{ jobs.report.outputs.project-workflow-repository }}
+      project-workflow-sha:
+        value: ${{ jobs.report.outputs.project-workflow-sha }}
+
+permissions: {}
+
+jobs:
+  report:
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      pages: write
+      id-token: write
+    uses: MattShelton04/pixelwatch-spike-lib/.github/workflows/report.yml@9c54426c3e5e46bdb6df13819e055a14376fc449 # v0.0.1

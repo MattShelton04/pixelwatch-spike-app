@@ -1,0 +1,77 @@
+# PixelWatch M0.5 spike S11: publisher-side identity recorder. Runs on workflow_run from the
+# default branch, checks out nothing, runs no PR code, writes nothing but its own artifact.
+# It records what the trusted side can corroborate through the payload and the REST API.
+name: Spike Report
+
+on:
+  workflow_run:
+    workflows: [Spike Capture]
+    types: [completed]
+
+permissions: {}
+
+env:
+  REDACT_JQ: >-
+    walk(if type == "object" then
+      (with_entries(select(.key | test("^(node_id|gravatar_id|url)$|_url$") | not))
+       | if has("email") then .email = "<redacted>" | (if has("name") then .name = "<redacted>" else . end) else . end)
+    else . end)
+
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Record payload and REST responses
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SRC_RUN_ID: ${{ github.event.workflow_run.id }}
+          SRC_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SRC_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SELF_REF: ${{ github.ref }}
+          SELF_SHA: ${{ github.sha }}
+          SELF_RUN_ID: ${{ github.run_id }}
+          SELF_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${SRC_RUN_ID}" =~ ^[0-9]+$ && "${SRC_ATTEMPT}" =~ ^[0-9]+$ && "${SRC_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p rec
+          red() { jq "${REDACT_JQ}"; }
+          jq -n --arg ref "$SELF_REF" --arg sha "$SELF_SHA" --arg runId "$SELF_RUN_ID" --arg attempt "$SELF_ATTEMPT" \
+            --arg defaultBranchTip "$(gh api "repos/${REPO}/commits/main" --jq .sha)" \
+            '{reportJob: {githubRef: $ref, githubSha: $sha, runId: $runId, runAttempt: $attempt}, defaultBranchTipAtReport: $defaultBranchTip}' \
+            > rec/report-job.json
+          red < "$GITHUB_EVENT_PATH" > rec/workflow_run-event.json
+          gh api "repos/${REPO}/actions/runs/${SRC_RUN_ID}" | red > rec/rest-run.json
+          gh api "repos/${REPO}/actions/runs/${SRC_RUN_ID}/attempts/${SRC_ATTEMPT}" | red > rec/rest-run-attempt.json
+          gh api "repos/${REPO}/actions/runs/${SRC_RUN_ID}/artifacts?per_page=100" \
+            | jq '{total_count, artifacts: [.artifacts[] | {id, name, size_in_bytes, expired, created_at, workflow_run}]}' \
+            > rec/rest-run-artifacts.json
+          gh api "repos/${REPO}/commits/${SRC_HEAD_SHA}/pulls" | red > rec/rest-commit-pulls.json
+          prs="$( { jq -r '.[].number' rec/rest-commit-pulls.json; jq -r '.workflow_run.pull_requests[].number' "$GITHUB_EVENT_PATH"; } | sort -un )"
+          for n in ${prs}; do
+            [[ "$n" =~ ^[0-9]+$ ]]
+            gh api "repos/${REPO}/pulls/${n}" | red > "rec/rest-pull-${n}.json"
+            cur_base="$(jq -r .base.sha "rec/rest-pull-${n}.json")"
+            gh api "repos/${REPO}/compare/${cur_base}...${SRC_HEAD_SHA}" \
+              | jq '{status, ahead_by, behind_by, base_commit: .base_commit.sha, merge_base_commit: .merge_base_commit.sha}' \
+              > "rec/rest-compare-pull-${n}-current-base.json"
+          done
+          jq -r '.workflow_run.pull_requests[] | "\(.number) \(.base.sha)"' "$GITHUB_EVENT_PATH" | while read -r n b; do
+            [[ "$n" =~ ^[0-9]+$ && "$b" =~ ^[0-9a-f]{40}$ ]]
+            gh api "repos/${REPO}/compare/${b}...${SRC_HEAD_SHA}" \
+              | jq '{status, ahead_by, behind_by, base_commit: .base_commit.sha, merge_base_commit: .merge_base_commit.sha}' \
+              > "rec/rest-compare-pull-${n}-payload-base.json"
+          done
+          ls -la rec
+          jq '{id: .workflow_run.id, run_attempt: .workflow_run.run_attempt, event: .workflow_run.event, head_sha: .workflow_run.head_sha, head_branch: .workflow_run.head_branch, pull_requests: .workflow_run.pull_requests}' rec/workflow_run-event.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s11-report-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: rec/
+          retention-days: 90

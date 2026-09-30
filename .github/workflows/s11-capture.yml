@@ -1,0 +1,127 @@
+# PixelWatch M0.5 spike S11: capture-side identity recorder. Mirrors docs/templates/pixelwatch-capture.yml
+# (refs job + separate base/head jobs) but captures nothing real: it records identities and uploads
+# a tiny synthetic bundle per revision. Untrusted side: contents: read, no secrets.
+name: Spike Capture
+
+on:
+  pull_request:
+    paths: ["s11/**"]
+  push:
+    branches: [main]
+    paths: ["s11/**"]
+
+permissions:
+  contents: read
+
+env:
+  # Redaction for recorded payloads: drop node IDs and URL-template noise, redact emails and
+  # commit author/committer names. Keeps numeric IDs, SHAs, refs, PR numbers and logins.
+  REDACT_JQ: >-
+    walk(if type == "object" then
+      (with_entries(select(.key | test("^(node_id|gravatar_id|url)$|_url$") | not))
+       | if has("email") then .email = "<redacted>" | (if has("name") then .name = "<redacted>" else . end) else . end)
+    else . end)
+
+jobs:
+  refs:
+    name: Select base and head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      base: ${{ steps.select.outputs.base }}
+      head: ${{ steps.select.outputs.head }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Same rule as the template: PR head + merge-base(event base, head); push: first parent.
+      - id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSHED: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT}" = "pull_request" ]; then
+            head="${PR_HEAD}"
+            base="$(git merge-base "${PR_BASE}" "${PR_HEAD}")"
+          else
+            head="${PUSHED}"
+            base="$(git rev-parse --verify --quiet "${PUSHED}^1" || true)"
+          fi
+          echo "head=${head}" >> "${GITHUB_OUTPUT}"
+          echo "base=${base}" >> "${GITHUB_OUTPUT}"
+      - name: Record capture-side identity
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          GH_SHA: ${{ github.sha }}
+          GH_REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          SEL_BASE: ${{ steps.select.outputs.base }}
+          SEL_HEAD: ${{ steps.select.outputs.head }}
+        run: |
+          set -euo pipefail
+          mkdir -p rec
+          parents="$(git rev-list --parents -n 1 "${GH_SHA}")"
+          base_tip_now="$(git rev-parse "origin/${PR_BASE_REF:-main}" 2>/dev/null || true)"
+          jq -n \
+            --arg event "$EVENT" --arg action "$ACTION" --arg githubSha "$GH_SHA" --arg githubRef "$GH_REF" \
+            --arg runId "$RUN_ID" --arg runAttempt "$RUN_ATTEMPT" --arg prNumber "$PR_NUMBER" \
+            --arg prHeadSha "$PR_HEAD" --arg prBaseSha "$PR_BASE" --arg prBaseRef "$PR_BASE_REF" \
+            --arg before "$BEFORE" --arg after "$AFTER" \
+            --arg githubShaParents "$parents" --arg baseBranchTipAtCheckout "$base_tip_now" \
+            --arg selectedBase "$SEL_BASE" --arg selectedHead "$SEL_HEAD" \
+            '$ARGS.named' > rec/capture-identity.json
+          cat rec/capture-identity.json
+          jq "${REDACT_JQ}" "$GITHUB_EVENT_PATH" > rec/event.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s11-capture-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: rec/
+          retention-days: 90
+
+  capture:
+    name: ${{ matrix.revision }} spike s1
+    needs: refs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [base, head]
+    steps:
+      - name: Check out ${{ matrix.revision }} revision
+        if: matrix.revision == 'head' || needs.refs.outputs.base != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.revision == 'base' && needs.refs.outputs.base || needs.refs.outputs.head }}
+          path: app
+          persist-credentials: false
+      - name: Write synthetic bundle (claims only)
+        env:
+          REVISION: ${{ matrix.revision }}
+          WANT: ${{ matrix.revision == 'base' && needs.refs.outputs.base || needs.refs.outputs.head }}
+        run: |
+          set -euo pipefail
+          mkdir -p pixelwatch-bundle
+          got="$(git -C app rev-parse HEAD 2>/dev/null || echo none)"
+          page="$(cat app/s11/page.txt 2>/dev/null || echo none)"
+          jq -n --arg revision "$REVISION" --arg selected "$WANT" --arg checkedOut "$got" --arg page "$page" \
+            '{spike: "S11 synthetic bundle", revision: $revision, selectedSha: $selected, checkedOutSha: $checkedOut, pageText: $page}' \
+            > pixelwatch-bundle/bundle.json
+          cat pixelwatch-bundle/bundle.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pixelwatch-b1-a${{ github.run_attempt }}-${{ matrix.revision }}-spike-s1-of1
+          path: pixelwatch-bundle/
+          retention-days: 90

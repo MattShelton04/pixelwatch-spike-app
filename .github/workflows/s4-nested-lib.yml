@@ -1,0 +1,110 @@
+# PixelWatch M0.5 spike S4: nested call inside the library.
+# app -> lib outer.yml@B -> ./report.yml, and app -> lib outer-dollar.yml@B -> $/.github/workflows/report.yml
+name: S4 nested in lib (v2)
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  outer:
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      pages: write
+      id-token: write
+    uses: MattShelton04/pixelwatch-spike-lib/.github/workflows/outer.yml@7f0ec44808846b50c31387574fac840c21ed85f2 # v0.0.2
+
+  outer-dollar:
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      pages: write
+      id-token: write
+    uses: MattShelton04/pixelwatch-spike-lib/.github/workflows/outer-dollar.yml@7f0ec44808846b50c31387574fac840c21ed85f2 # v0.0.2
+
+  assert:
+    needs: outer
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert the pinned bundle ran (expect v2 from 7f0ec44)
+        env:
+          RESULT: ${{ needs.outer.result }}
+          INGEST_BUNDLE: ${{ needs.outer.outputs.ingest-bundle }}
+          INGEST_NONCE: ${{ needs.outer.outputs.ingest-nonce }}
+          INGEST_REPO: ${{ needs.outer.outputs.ingest-workflow-repository }}
+          INGEST_SHA: ${{ needs.outer.outputs.ingest-workflow-sha }}
+          PROJECT_BUNDLE: ${{ needs.outer.outputs.project-bundle }}
+          PROJECT_NONCE: ${{ needs.outer.outputs.project-nonce }}
+          PROJECT_REPO: ${{ needs.outer.outputs.project-workflow-repository }}
+          PROJECT_SHA: ${{ needs.outer.outputs.project-workflow-sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            if [[ "$2" == "$3" ]]; then echo "ok   $1 = $2"; else echo "::error::$1 = '$2', expected '$3'"; fail=1; fi
+          }
+          check result "$RESULT" success
+          check ingest.bundle "$INGEST_BUNDLE" v2
+          check ingest.nonce "$INGEST_NONCE" 6667b07e0531783d
+          check ingest.workflow_repository "$INGEST_REPO" MattShelton04/pixelwatch-spike-lib
+          check ingest.workflow_sha "$INGEST_SHA" 7f0ec44808846b50c31387574fac840c21ed85f2
+          check project.bundle "$PROJECT_BUNDLE" v2
+          check project.nonce "$PROJECT_NONCE" 6667b07e0531783d
+          check project.workflow_repository "$PROJECT_REPO" MattShelton04/pixelwatch-spike-lib
+          check project.workflow_sha "$PROJECT_SHA" 7f0ec44808846b50c31387574fac840c21ed85f2
+          exit "$fail"
+
+  assert-outer-probe:
+    needs: outer
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert the outer workflow's own job fields
+        env:
+          OUTER_REPO: ${{ needs.outer.outputs.outer-workflow-repository }}
+          OUTER_SHA: ${{ needs.outer.outputs.outer-workflow-sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            if [[ "$2" == "$3" ]]; then echo "ok   $1 = $2"; else echo "::error::$1 = '$2', expected '$3'"; fail=1; fi
+          }
+          check outer.workflow_repository "$OUTER_REPO" MattShelton04/pixelwatch-spike-lib
+          check outer.workflow_sha "$OUTER_SHA" 7f0ec44808846b50c31387574fac840c21ed85f2
+          exit "$fail"
+
+  assert-dollar:
+    needs: outer-dollar
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert the nested self-repository call ran bundle v2
+        env:
+          RESULT: ${{ needs.outer-dollar.result }}
+          INGEST_BUNDLE: ${{ needs.outer-dollar.outputs.ingest-bundle }}
+          INGEST_NONCE: ${{ needs.outer-dollar.outputs.ingest-nonce }}
+          INGEST_SHA: ${{ needs.outer-dollar.outputs.ingest-workflow-sha }}
+          PROJECT_SHA: ${{ needs.outer-dollar.outputs.project-workflow-sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            if [[ "$2" == "$3" ]]; then echo "ok   $1 = $2"; else echo "::error::$1 = '$2', expected '$3'"; fail=1; fi
+          }
+          check result "$RESULT" success
+          check ingest.bundle "$INGEST_BUNDLE" v2
+          check ingest.nonce "$INGEST_NONCE" 6667b07e0531783d
+          check ingest.workflow_sha "$INGEST_SHA" 7f0ec44808846b50c31387574fac840c21ed85f2
+          check project.workflow_sha "$PROJECT_SHA" 7f0ec44808846b50c31387574fac840c21ed85f2
+          exit "$fail"

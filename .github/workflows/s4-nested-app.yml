@@ -1,0 +1,52 @@
+# PixelWatch M0.5 spike S4: nested call from the adopter side. app -> ./wrap.yml -> lib report.yml@A
+name: S4 nested in app (v1)
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  wrap:
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/wrap.yml
+
+  assert:
+    needs: wrap
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert the pinned bundle ran (expect v1 from 9c54426)
+        env:
+          RESULT: ${{ needs.wrap.result }}
+          INGEST_BUNDLE: ${{ needs.wrap.outputs.ingest-bundle }}
+          INGEST_NONCE: ${{ needs.wrap.outputs.ingest-nonce }}
+          INGEST_REPO: ${{ needs.wrap.outputs.ingest-workflow-repository }}
+          INGEST_SHA: ${{ needs.wrap.outputs.ingest-workflow-sha }}
+          PROJECT_BUNDLE: ${{ needs.wrap.outputs.project-bundle }}
+          PROJECT_NONCE: ${{ needs.wrap.outputs.project-nonce }}
+          PROJECT_REPO: ${{ needs.wrap.outputs.project-workflow-repository }}
+          PROJECT_SHA: ${{ needs.wrap.outputs.project-workflow-sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            if [[ "$2" == "$3" ]]; then echo "ok   $1 = $2"; else echo "::error::$1 = '$2', expected '$3'"; fail=1; fi
+          }
+          check result "$RESULT" success
+          check ingest.bundle "$INGEST_BUNDLE" v1
+          check ingest.nonce "$INGEST_NONCE" d77ee74f0fb9ef4f
+          check ingest.workflow_repository "$INGEST_REPO" MattShelton04/pixelwatch-spike-lib
+          check ingest.workflow_sha "$INGEST_SHA" 9c54426c3e5e46bdb6df13819e055a14376fc449
+          check project.bundle "$PROJECT_BUNDLE" v1
+          check project.nonce "$PROJECT_NONCE" d77ee74f0fb9ef4f
+          check project.workflow_repository "$PROJECT_REPO" MattShelton04/pixelwatch-spike-lib
+          check project.workflow_sha "$PROJECT_SHA" 9c54426c3e5e46bdb6df13819e055a14376fc449
+          exit "$fail"

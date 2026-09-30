@@ -1,0 +1,31 @@
+# PixelWatch M0.5 spike S4: what the job fields hold in a direct (non-reusable) workflow.
+name: S4 direct job fields
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  direct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Log job and github fields
+        env:
+          WF_REPO: ${{ job.workflow_repository }}
+          WF_SHA: ${{ job.workflow_sha }}
+          WF_REF: ${{ job.workflow_ref }}
+          WF_PATH: ${{ job.workflow_file_path }}
+          CALLER_REPO: ${{ github.repository }}
+          CALLER_SHA: ${{ github.sha }}
+          CALLER_WF_REF: ${{ github.workflow_ref }}
+          CALLER_WF_SHA: ${{ github.workflow_sha }}
+        run: |
+          echo "job.workflow_repository=${WF_REPO}"
+          echo "job.workflow_sha=${WF_SHA}"
+          echo "job.workflow_ref=${WF_REF}"
+          echo "job.workflow_file_path=${WF_PATH}"
+          echo "github.repository=${CALLER_REPO} github.sha=${CALLER_SHA}"
+          echo "github.workflow_ref=${CALLER_WF_REF} github.workflow_sha=${CALLER_WF_SHA}"

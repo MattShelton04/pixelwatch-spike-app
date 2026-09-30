@@ -1,0 +1,38 @@
+# PixelWatch M0.5 spike S4: NEGATIVE CONTROL. lib naive.yml runs `./actions/publish` from the
+# default checkout. Expected: the caller's IMPOSTOR runs. This proves the assertions can tell
+# caller code from the pinned bundle.
+name: S4 naive control (expect IMPOSTOR)
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  naive:
+    permissions:
+      contents: read
+    uses: MattShelton04/pixelwatch-spike-lib/.github/workflows/naive.yml@7f0ec44808846b50c31387574fac840c21ed85f2 # v0.0.2
+
+  assert:
+    needs: naive
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Assert the naive ./ reference ran the caller's code
+        env:
+          RESULT: ${{ needs.naive.result }}
+          BUNDLE: ${{ needs.naive.outputs.bundle }}
+          NONCE: ${{ needs.naive.outputs.nonce }}
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            if [[ "$2" == "$3" ]]; then echo "ok   $1 = $2"; else echo "::error::$1 = '$2', expected '$3'"; fail=1; fi
+          }
+          check result "$RESULT" success
+          check bundle "$BUNDLE" IMPOSTOR
+          check nonce "$NONCE" caller-code
+          exit "$fail"
