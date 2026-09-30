@@ -97,8 +97,8 @@ jobs:
           export SITE_URL
           echo "deploy outcome: ${DEPLOY_OUTCOME}"
           if [[ "${DEPLOY_OUTCOME}" == "success" ]]; then export TIMEOUT_S="${READY_TIMEOUT_S}"; else export TIMEOUT_S=60; fi
-          node scripts/probe.mjs ready
-          status=$?
+          status=0
+          node scripts/probe.mjs ready || status=$?
           if [[ "${DEPLOY_OUTCOME}" != "success" ]]; then
             echo "SUMMARY: deploy ${DEPLOY_OUTCOME}; readiness exit ${status}. Stored; deployment pending (repair: rerun this workflow with the same store_tip)."
           fi
