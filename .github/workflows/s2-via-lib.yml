@@ -1,0 +1,24 @@
+# PixelWatch M0.5 spike S2 (production shape): deploy Pages through the library's reusable workflow,
+# pinned by full SHA. The adopter grants the permissions; the called job declares the environment.
+name: S2 Pages via lib
+
+on:
+  workflow_dispatch:
+    inputs:
+      store_tip:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  project:
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: MattShelton04/pixelwatch-spike-lib/.github/workflows/pages.yml@eee3ea73742ebd928c8eda15ec27a71d30c97e27 # v0.0.3
+    with:
+      store_tip: ${{ inputs.store_tip }}
+      pr_numbers: "1,2"
+      run_key: 1010-a1
