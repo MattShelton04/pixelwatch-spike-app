@@ -8,6 +8,8 @@
 // Ready = served site.json has the expected generation AND every PR latest.json names the
 // expected run key + generation AND every fetched body's SHA-256 equals the built bytes AND the
 // PNG answers with the built bytes. HTTP 200 alone is never ready.
+// READY_CONSECUTIVE (default 3): that many consecutive passing polls, each >= INTERVAL_S apart,
+// before reporting ready. The first passing poll is logged too, for comparison.
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 
@@ -70,8 +72,11 @@ if (mode === "ready") {
   const built = JSON.parse(readFileSync(process.env.BUILT_MANIFEST, "utf8"));
   const timeoutMs = 1000 * Number(process.env.TIMEOUT_S || 600);
   const targets = ["site.json", ...built.prNumbers.map((n) => `api/v1/pr/${n}/latest.json`), built.png];
+  const needConsecutive = Number(process.env.READY_CONSECUTIVE || 3);
   let polls = 0;
-  const seen = { stale200: 0, notFound: 0, otherStatus: 0, digestMismatch: 0 };
+  let streak = 0;
+  let firstPassMs;
+  const seen = { stale200: 0, notFound: 0, otherStatus: 0, digestMismatch: 0, regressedAfterPass: 0 };
   for (;;) {
     polls++;
     const results = await Promise.all(targets.map((t) => get(t, false)));
@@ -92,9 +97,16 @@ if (mode === "ready") {
       else if (v !== "ok") seen.otherStatus++;
     }
     const ready = verdicts.every((v) => v === "ok");
-    log({ poll: polls, elapsedMs: Date.now() - t0, at: new Date().toISOString(), ready, verdicts, results: results.map(brief), cacheBusted: brief(busted) });
     if (ready) {
-      console.log(`READY generation=${built.generation} after ${Date.now() - t0} ms, ${polls} polls; not-ready observations: ${JSON.stringify(seen)}`);
+      streak++;
+      if (firstPassMs === undefined) firstPassMs = Date.now() - t0;
+    } else {
+      if (firstPassMs !== undefined) seen.regressedAfterPass++;
+      streak = 0;
+    }
+    log({ poll: polls, elapsedMs: Date.now() - t0, at: new Date().toISOString(), ready, streak, verdicts, results: results.map(brief), cacheBusted: brief(busted) });
+    if (streak >= needConsecutive) {
+      console.log(`READY generation=${built.generation} after ${Date.now() - t0} ms (${needConsecutive} consecutive), first passing poll at ${firstPassMs} ms, ${polls} polls; not-ready observations: ${JSON.stringify(seen)}`);
       break;
     }
     if (Date.now() - t0 + intervalMs > timeoutMs) {
