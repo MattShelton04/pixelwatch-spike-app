@@ -1,1 +1,2 @@
 S11 synthetic page: head H1
+head H2 (synthetic, S11 synchronize)
